@@ -1,0 +1,49 @@
+// BIND выбирает представление по IP клиента или по ключу обмена между DNS-серверами.
+options {
+    directory "/var/named";
+    pid-file "/run/named/named.pid";
+    session-keyfile "/run/named/session.key";
+    listen-on port 53 { {{ lab_addresses[inventory_hostname] }}; };
+    listen-on-v6 { none; };
+    recursion no;
+    dnssec-validation no;
+    allow-transfer { none; };
+};
+
+{% for view in dns_views %}
+key "xfr-{{ view.name }}" {
+    algorithm hmac-sha256;
+    secret "{{ lookup('ansible.builtin.password', playbook_dir ~ '/../.vagrant/tsig/' ~ view.name, length=48, chars=['ascii_letters', 'digits']) | b64encode }}";
+};
+{% endfor %}
+
+{% for view in dns_views %}
+view "{{ view.name }}" {
+    match-clients { key "xfr-{{ view.name }}"; {{ lab_addresses[view.client] }}; };
+
+{% for zone in view.zones %}
+    zone "{{ zone.name }}" {
+{% if inventory_hostname == 'ns01' %}
+        type primary;
+        file "{{ view.name }}.{{ zone.name }}.zone";
+        allow-transfer { key "xfr-{{ view.name }}"; };
+        notify explicit;
+        also-notify { {{ lab_addresses.ns02 }} key "xfr-{{ view.name }}"; };
+        notify-source {{ lab_addresses.ns01 }};
+{% else %}
+        type secondary;
+        file "slaves/{{ view.name }}.{{ zone.name }}.zone";
+        primaries { {{ lab_addresses.ns01 }} key "xfr-{{ view.name }}"; };
+        transfer-source {{ lab_addresses.ns02 }};
+        notify no;
+{% endif %}
+    };
+
+{% endfor %}
+};
+{% endfor %}
+
+view "default" {
+    match-clients { any; };
+    allow-query { none; };
+};

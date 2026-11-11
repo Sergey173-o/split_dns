@@ -1,0 +1,22 @@
+---
+# Порядок элементов задаёт порядок выбора представлений в BIND.
+dns_views:
+  - name: client1
+    client: client
+    zones:
+      - name: dns.lab
+        records:
+          web1: [client]
+      - name: newdns.lab
+        records:
+          www: [client, client2]
+  - name: client2
+    client: client2
+    zones:
+      - name: dns.lab
+        records:
+          web1: [client]
+          web2: [client2]
+
+# Увеличивайте серийный номер при изменении данных зон для передачи на ns02.
+dns_serial: 2026110901

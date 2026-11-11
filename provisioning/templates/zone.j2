@@ -1,0 +1,19 @@
+$TTL 300
+@ IN SOA ns01.dns.lab. hostmaster.dns.lab. (
+    {{ dns_serial }} ; серийный номер
+    60              ; интервал обновления
+    30              ; интервал повторной попытки
+    86400           ; срок хранения при недоступности ns01
+    60              ; TTL отрицательного ответа
+)
+@ IN NS ns01.dns.lab.
+@ IN NS ns02.dns.lab.
+{% if item.1.name == 'dns.lab' %}
+ns01 IN A {{ lab_addresses.ns01 }}
+ns02 IN A {{ lab_addresses.ns02 }}
+{% endif %}
+{% for name, hosts in item.1.records.items() %}
+{% for host in hosts %}
+{{ name }} IN A {{ lab_addresses[host] }}
+{% endfor %}
+{% endfor %}

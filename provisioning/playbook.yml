@@ -1,0 +1,129 @@
+---
+- name: Проверить режим SELinux на всех ВМ
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Убедиться, что SELinux работает в режиме Enforcing
+      ansible.builtin.command: /usr/sbin/getenforce
+      register: selinux_mode
+      changed_when: false
+      failed_when: selinux_mode.stdout | trim != 'Enforcing'
+
+- name: Настроить первичный и вторичный серверы BIND
+  hosts: dns_servers
+  become: true
+  gather_facts: false
+  vars_files:
+    - vars/zones.yml
+  tasks:
+    - name: Установить BIND и диагностические утилиты
+      ansible.builtin.dnf:
+        name: [bind, bind-utils]
+        state: present
+
+    - name: Установить файлы первичных зон
+      ansible.builtin.template:
+        src: zone.j2
+        dest: "/var/named/{{ item.0.name }}.{{ item.1.name }}.zone"
+        owner: root
+        group: named
+        mode: "0640"
+        validate: "/usr/sbin/named-checkzone {{ item.1.name }} %s"
+      loop: "{{ dns_views | subelements('zones') }}"
+      loop_control:
+        label: "{{ item.0.name }}/{{ item.1.name }}"
+      when: inventory_hostname == 'ns01'
+      notify: Перезапустить named
+
+    - name: Установить конфигурацию BIND с ключами переноса зон
+      ansible.builtin.template:
+        src: named.conf.j2
+        dest: /etc/named.conf
+        owner: root
+        group: named
+        mode: "0640"
+        validate: /usr/sbin/named-checkconf -z %s
+      no_log: true
+      diff: false
+      notify: Перезапустить named
+
+    - name: Восстановить штатные метки SELinux для BIND
+      ansible.builtin.command: /usr/sbin/restorecon -Rv /etc/named.conf /var/named
+      register: bind_contexts
+      changed_when: bind_contexts.stdout | length > 0
+
+    - name: Узнать состояние firewalld
+      ansible.builtin.service_facts:
+
+    - name: Разрешить DNS в штатной зоне firewalld
+      when: ansible_facts.services.get('firewalld.service', {}).get('state') == 'running'
+      block:
+        - name: Проверить постоянное и текущее правила DNS
+          ansible.builtin.command:
+            argv: "{{ ['firewall-cmd', '--query-service=dns'] + item }}"
+          loop: [["--permanent"], []]
+          register: dns_firewall
+          changed_when: false
+          failed_when: dns_firewall.rc not in [0, 1]
+
+        - name: Добавить отсутствующие правила для TCP и UDP 53
+          ansible.builtin.command:
+            argv: "{{ ['firewall-cmd', '--add-service=dns'] + item.item }}"
+          loop: "{{ dns_firewall.results }}"
+          loop_control:
+            label: "{{ 'постоянное' if item.item else 'текущее' }}"
+          when: item.rc == 1
+          changed_when: true
+
+    - name: Применить изменения конфигурации BIND
+      ansible.builtin.meta: flush_handlers
+
+    - name: Включить службу named
+      ansible.builtin.systemd_service:
+        name: named
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Перезапустить named
+      ansible.builtin.systemd_service:
+        name: named
+        state: restarted
+
+- name: Настроить DNS на клиентах
+  hosts: dns_clients
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Установить утилиты DNS и локальный DNS-прокси
+      ansible.builtin.dnf:
+        name: [bind-utils, dnsmasq]
+        state: present
+
+    - name: Создать каталог дополнительных настроек dnsmasq
+      ansible.builtin.file:
+        path: /etc/NetworkManager/dnsmasq.d
+        state: directory
+        mode: "0755"
+
+    - name: Направить запросы к .lab на серверы стенда
+      ansible.builtin.template:
+        src: dnsmasq.conf.j2
+        dest: /etc/NetworkManager/dnsmasq.d/90-split-dns.conf
+        mode: "0644"
+        validate: /usr/sbin/dnsmasq --test --conf-file=%s
+      notify: Перечитать настройки DNS NetworkManager
+
+    - name: Включить DNS-прокси в NetworkManager
+      ansible.builtin.copy:
+        dest: /etc/NetworkManager/conf.d/90-split-dns.conf
+        content: |
+          [main]
+          dns=dnsmasq
+        mode: "0644"
+      notify: Перечитать настройки DNS NetworkManager
+
+  handlers:
+    - name: Перечитать настройки DNS NetworkManager
+      ansible.builtin.shell: nmcli general reload conf && nmcli general reload dns-full
+      changed_when: true
