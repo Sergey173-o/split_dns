@@ -430,18 +430,12 @@ root@nfsc:~/split-dns-lab#
 ручная проверка
 
    ```bash
-root@nfsc:~/split-dns-lab# vagrant ssh client
+vagrant ssh client
+[vagrant@client ~]$  
    dig @192.168.50.10 web2.dns.lab. A +norecurse
    dig @192.168.50.11 www.newdns.lab. A +short
    getent ahostsv4 www.newdns.lab.
    getenforce
-Last login: Wed Nov 11 12:01:46 2026 from 10.0.2.2
-[vagrant@client ~]$  vagrant ssh client
-   dig @192.168.50.10 web2.dns.lab. A +norecurse
-   dig @192.168.50.11 www.newdns.lab. A +short
-   getent ahostsv4 www.newdns.lab.
-   getenforce
--bash: vagrant: command not found
 
 ; <<>> DiG 9.16.23-RH <<>> @192.168.50.10 web2.dns.lab. A +norecurse
 ; (1 server found)
